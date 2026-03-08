@@ -1,0 +1,102 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ubuntu-embedded-build-arm-toolchain
+
+jobs:
+  build-amd64:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ github.sha }}-amd64
+          cache-from: type=gha,scope=ubuntu-embedded-build-arm-toolchain-amd64
+          cache-to: type=gha,mode=max,scope=ubuntu-embedded-build-arm-toolchain-amd64
+
+  build-arm64:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ github.sha }}-arm64
+          cache-from: type=gha,scope=ubuntu-embedded-build-arm-toolchain-arm64
+          cache-to: type=gha,mode=max,scope=ubuntu-embedded-build-arm-toolchain-arm64
+
+  manifest:
+    runs-on: ubuntu-latest
+    needs: [build-amd64, build-arm64]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest (:latest)
+        run: |
+          docker buildx imagetools create -t "${IMAGE}:latest" \
+            "${IMAGE}:sha-${GITHUB_SHA}-amd64" \
+            "${IMAGE}:sha-${GITHUB_SHA}-arm64"
+
+      - name: Also tag commit sha manifest
+        run: |
+          docker buildx imagetools create -t "${IMAGE}:sha-${GITHUB_SHA}" \
+            "${IMAGE}:sha-${GITHUB_SHA}-amd64" \
+            "${IMAGE}:sha-${GITHUB_SHA}-arm64"
